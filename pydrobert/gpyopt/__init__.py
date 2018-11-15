@@ -400,7 +400,7 @@ def bayesopt(wrapper, params, history_file=None):
             log_after_iters = params.log_after_iters
         try:
             X, Y = wrapper.read_history_to_X_Y(history_file)
-        except FileNotFoundError:
+        except IOError:
             pass
     rem = max(0, max_samples - len(X))
     initial_design_samples = max(params.initial_design_samples - len(X), 0)
