@@ -1,0 +1,2 @@
+exclude .gitignore .travis.yml .appveyor.yml test_gpyopt.py
+prune recipe
