@@ -45,7 +45,7 @@ setup(
         'Programming Language :: Python :: 3.7'
     ],
     install_requires=[
-        'numpy', 'future', 'GPyOpt', 'param'
+        'numpy', 'future', 'GPyOpt', 'param', 'matplotlb'
     ],
     setup_requires=SETUP_REQUIRES,
     tests_require=[

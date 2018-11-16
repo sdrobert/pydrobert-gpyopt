@@ -2,3 +2,4 @@ numpy
 future
 GPyOpt
 param
+matplotlib
