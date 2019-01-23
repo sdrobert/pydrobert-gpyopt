@@ -9,6 +9,7 @@ from shutil import rmtree
 
 import pytest
 import pydrobert.gpyopt as gpyopt
+import numpy as np
 
 __author__ = "Sean Robertson"
 __email__ = "sdrobert@cs.toronto.edu"
@@ -27,8 +28,8 @@ def _polynomial(x, d, shift):
     return x ** d + shift
 
 
-def _squared(x, shift):
-    return _polynomial(x, 2, shift)
+def _squared(x, shift, noise=0.0):
+    return _polynomial(x, 2, shift + noise * np.random.randn())
 
 
 def test_simple_objective():
@@ -70,21 +71,24 @@ def test_multiple_variable_types():
     assert best['d'] == 5
 
 
-def test_restart_with_seed_gives_same_predictions(temp_dir):
-    wrapper = gpyopt.GPyOptObjectiveWrapper(_squared)
+@pytest.mark.parametrize('seed', [1, 2, 3])
+def test_restart_with_seed_gives_same_predictions(temp_dir, seed):
+    wrapper = gpyopt.GPyOptObjectiveWrapper(
+        lambda **args: _squared(**args, noise=0.1))
     wrapper.set_variable_parameter('x', 'continuous', (-1., 1.))
     wrapper.set_variable_parameter('shift', 'continuous', (10, 11))
     hist_path = os.path.join(temp_dir, 'hist.csv')
     params = gpyopt.BayesianOptimizationParams(
         max_samples=6,
         model_type='gp',
-        seed=1,
+        seed=seed,
+        noise_var=0.1,
     )
     gpyopt.bayesopt(wrapper, params, hist_path)
     params.max_samples = 8
     best_1 = gpyopt.bayesopt(wrapper, params, hist_path)
     best_2 = gpyopt.bayesopt(wrapper, params)
-    assert abs(best_1['x'] - best_2['x']) < 1e-10
+    assert abs(best_1['x'] - best_2['x']) < 1e-5
 
 
 def test_strings_are_provided():

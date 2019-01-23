@@ -352,7 +352,7 @@ def bayesopt(wrapper, params, history_file=None):
     wrapper : GPyOptObjectiveWrapper
         The wrapped objective function. All parameters should be set by
         this point
-    param : BayesianOptimizationParams
+    params : BayesianOptimizationParams
     history_file : str, optional
         A path to a history file, where past samples are saved and loaded
 
@@ -451,16 +451,27 @@ def bayesopt(wrapper, params, history_file=None):
             samples_before_log = log_after_iters
             write_to_history(X, Y)
     assert len(X) >= min(max_samples, params.initial_design_samples)
+    # As of writing, GPyOpt only updates model parameters once - on
+    # initialization of 'bo'. Those parameters are based on X and Y. To
+    # ensure that restarting the process gets the same model parameters, we
+    # pretend as though we have only initial_design_samples, then update X and
+    # Y later
     bo = GPyOpt.methods.ModularBayesianOptimization(
-        model, space, objective, acquisition, evaluator, X, Y)
+        model, space, objective, acquisition, evaluator,
+        X[:params.initial_design_samples],
+        Y[:params.initial_design_samples],
+    )
+    bo.run_optimization(0)
+    bo.X = X
+    bo.Y = Y
     while rem:
         if params.seed is not None:
-            np.random.seed(params.seed + len(X))
+            np.random.seed(params.seed)
             cur_num = 1
         else:
             cur_num = min(rem, samples_before_log)
         bo.run_optimization(cur_num, eps=10 ** params.log10_min_diff)
-        X_new, Y_new = bo.X, bo.Y
+        X_new, Y_new = bo.get_evaluations()
         assert np.allclose(X_new[:len(X)], X)
         if len(X_new) - len(X) < cur_num:
             # we were less than the minimum difference
