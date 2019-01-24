@@ -433,7 +433,7 @@ def bayesopt(wrapper, params, history_file=None):
     X_init = GPyOpt.experiment_design.initial_design(
         params.initial_design_name, space,
         params.initial_design_samples)
-    X_init = X_init[len(X):max_samples]
+    X_init = X_init[len(X):max_samples if max_samples < float('inf') else None]
     assert len(X_init) == initial_design_samples
     samples_before_log = log_after_iters
     while initial_design_samples:
