@@ -1,4 +1,4 @@
-# Copyright 2018 Sean Robertson
+# Copyright 2018-2019 Sean Robertson
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -432,8 +432,8 @@ def bayesopt(wrapper, params, history_file=None):
     # assume that the initial design remains in the history file in order
     X_init = GPyOpt.experiment_design.initial_design(
         params.initial_design_name, space,
-        min(max_samples, params.initial_design_samples))
-    X_init = X_init[len(X):]
+        params.initial_design_samples)
+    X_init = X_init[len(X):max_samples]
     assert len(X_init) == initial_design_samples
     samples_before_log = log_after_iters
     while initial_design_samples:
@@ -458,12 +458,9 @@ def bayesopt(wrapper, params, history_file=None):
     # Y later
     bo = GPyOpt.methods.ModularBayesianOptimization(
         model, space, objective, acquisition, evaluator,
-        X[:params.initial_design_samples],
-        Y[:params.initial_design_samples],
+        X, Y,
+        normalize_Y=False,
     )
-    bo.run_optimization(0)
-    bo.X = X
-    bo.Y = Y
     while rem:
         if params.seed is not None:
             np.random.seed(params.seed)

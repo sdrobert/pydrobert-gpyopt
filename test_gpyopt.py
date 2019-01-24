@@ -25,6 +25,7 @@ def temp_dir():
 
 
 def _polynomial(x, d, shift):
+    print(x, d, shift)
     return x ** d + shift
 
 
@@ -71,18 +72,17 @@ def test_multiple_variable_types():
     assert best['d'] == 5
 
 
-@pytest.mark.parametrize('seed', [1, 2, 3])
-def test_restart_with_seed_gives_same_predictions(temp_dir, seed):
+@pytest.mark.parametrize('inter_max_samples', [4, 5, 6])
+def test_restart_with_seed_gives_same_predictions(temp_dir, inter_max_samples):
     wrapper = gpyopt.GPyOptObjectiveWrapper(
-        lambda **args: _squared(**args, noise=0.1))
+        lambda **args: _squared(**args))
     wrapper.set_variable_parameter('x', 'continuous', (-1., 1.))
     wrapper.set_variable_parameter('shift', 'continuous', (10, 11))
     hist_path = os.path.join(temp_dir, 'hist.csv')
     params = gpyopt.BayesianOptimizationParams(
-        max_samples=6,
+        max_samples=inter_max_samples,
         model_type='gp',
-        seed=seed,
-        noise_var=0.1,
+        seed=1,
     )
     gpyopt.bayesopt(wrapper, params, hist_path)
     params.max_samples = 8
