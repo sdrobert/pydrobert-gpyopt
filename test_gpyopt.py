@@ -40,13 +40,13 @@ def _day_cannot_be_tuesday(day, some_other_value=1):
     return day != 'tuesday'
 
 
-def _int_is_even(int_):
+def _int_not_odd(int_):
     return bool(1 - int_ % 2)
 
 
 def _enforcer_objective(int_, day):
     assert _day_cannot_be_tuesday(day)
-    assert _int_is_even(int_)
+    assert _int_not_odd(int_)
     return np.random.randn()
 
 
@@ -72,13 +72,20 @@ def test_simple_objective():
     assert abs(_squared(best_3['x'], 1.) - 1.) < 1e-2
 
 
-# def test_constraints():
-#     wrapper = gpyopt.GPyOptObjectiveWrapper(_enforcer_objective)
-#     wrapper.set_variable_parameter('x', 'discrete' (0, 4))
-#     wrapper.set_variable_parameter('day', 'categorical', ('monday', 'tuesday'))
-#     params = gpyopt.BayesianOptimizationParams(
-#         seed=10
-#     )
+def test_constraints():
+    wrapper = gpyopt.GPyOptObjectiveWrapper(_enforcer_objective)
+    wrapper.set_variable_parameter('int_', 'discrete', (0, 3))
+    wrapper.set_variable_parameter('day', 'categorical', ('monday', 'tuesday'))
+    params = gpyopt.BayesianOptimizationParams(
+        initial_design_samples=4,
+        max_iterations=5,
+    )
+    best = gpyopt.bayesopt(wrapper, params, constraints=[
+        _day_cannot_be_tuesday,
+        _int_not_odd,
+    ])
+    assert best['int_'] in {0, 2}
+    assert best['day'] == 'monday'
 
 
 def test_multiple_variable_types():
@@ -130,7 +137,7 @@ def test_can_serialize_lots_of_stuff(temp_dir):
     hist_path = os.path.join(temp_dir, 'hist.csv')
     params = gpyopt.BayesianOptimizationParams(
         initial_design_samples=4,
-        max_samples=4,
+        max_samples=5,
         seed=5,
     )
     best_1 = gpyopt.bayesopt(wrapper, params, hist_path)

@@ -10,6 +10,7 @@ second, ``bayesopt``, takes a wrapper instance and a
 Here's an example:
 
 ``` python
+import pydrobert.gpyopt as gpyopt
 def foo(a, d, b, **kwargs):
     r = a ** d + b
     weirdness = kwargs['weirdness']
@@ -18,23 +19,26 @@ def foo(a, d, b, **kwargs):
     elif weirdness == 'null':
         r = 0
     return r
-wrapped = GPyOptObjectiveWrapper(foo)
-wrapped.set_fixed_parameter('b', 1.)  # 'b' will always be 1
-wrapped.set_variable_parameter('a', 'continuous', (-1., 1.))  # a is real
+wrapper = gpyopt.GPyOptObjectiveWrapper(foo)
+wrapper.set_fixed_parameter('b', 1.)  # 'b' will always be 1
+wrapper.set_variable_parameter('a', 'continuous', (-1., 1.))  # a is real
                                                               # btw [-1,1] inc
-wrapped.set_variable_parameter('d', 'discrete', (0, 3))  # d is an int
+wrapper.set_variable_parameter('d', 'discrete', (0, 3))  # d is an int
                                                          # btw [0, 3] inc
-wrapped.add_parameter('weirdness')  # we can add new parameters as dynamic
+wrapper.add_parameter('weirdness')  # we can add new parameters as dynamic
                                     # keyword args if the method has a **
                                     # parameter
-wrapped.set_variable_parameter(  # weirness one of the elements in the list
+wrapper.set_variable_parameter(  # weirness one of the elements in the list
     'weirdness', 'categorical', ('flip', 'null', None))
-params = BayesianOptimizationParams(
+params = gpyopt.BayesianOptimizationParams(
   seed=1,  # setting this makes the bayesian optimization deterministic
            # (assuming foo is deterministic)
   log_after_iters=5,
 )
-best = bayesopt(wrapper, params, 'hist.csv')
+best = gpyopt.bayesopt(wrapper, params, 'hist.csv', constraints=[
+    lambda a, d: abs(a - d) > .5,  # constrain the difference between a and
+                                   # d to be greater than .5
+])
 ```
 
 If you provide a history file to read/write from, optimization can be

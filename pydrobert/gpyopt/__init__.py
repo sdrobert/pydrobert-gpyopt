@@ -24,6 +24,7 @@ import shutil
 from collections import OrderedDict, namedtuple
 from csv import DictReader, DictWriter
 from tempfile import NamedTemporaryFile
+from contextlib import contextmanager
 
 import GPy
 import GPyOpt
@@ -396,7 +397,7 @@ class BayesianOptimizationParams(param.Parameterized):
     )
 
 
-class GPyOptDesignSpaceWrapper(GPyOpt.Design_space):
+class _DSWrapper(GPyOpt.Design_space):
     '''Create a design space for a GPyOptObjectiveWrapper
 
     Parameters
@@ -416,41 +417,76 @@ class GPyOptDesignSpaceWrapper(GPyOpt.Design_space):
         if len(wrapper.get_unset()):
             raise ValueError('All parameters must be set in objective')
         self.wrapper = wrapper
-        domain = wrapper.get_domain()
         if constraints is not None:
             all_param_names = set(wrapper.param_dict)
             new_constraints = []
+            self.constraint_args = []
             for constraint in constraints:
                 try:
                     name = constraint['name']
                     constraint = constraint['constraint']
                 except TypeError:
                     name = 'constraint_{}'.format(len(new_constraints) + 1)
-                arg_names, _, _, defaults = inspect.getargspec(
+                arg_names, _, kwargs_name, defaults = inspect.getargspec(
                     constraint)
-                constraint_names = set(
-                    arg_names[:len(arg_names) - len(defaults)])
-                missing_params = all_param_names - constraint_names
+                num_kwargs = len(defaults) if defaults else 0
+                pos_names = set(arg_names[:len(arg_names) - num_kwargs])
+                missing_params = pos_names - all_param_names
+                if kwargs_name is not None:
+                    # pass everything to the constraint
+                    constraint_kwargs = None
+                else:
+                    constraint_kwargs = arg_names
                 if missing_params:
                     raise ValueError(
                         'constraint contains parameters {} which are not '
                         'arguments to the objective'.format(missing_params))
-                new_constraints.append(
-                    {'name': name, 'constraint': constraint})
+                new_constraints.append({
+                    'name': name,
+                    'constraint': constraint,
+                    'kwargs': constraint_kwargs
+                })
             constraints = new_constraints
-        super(GPyOptDesignSpaceWrapper, self).__init__(
-            domain, constraints=constraints)
+        super(_DSWrapper, self).__init__(
+            wrapper.get_domain(), constraints=constraints)
 
     def indicator_constraints(self, X):
         X = np.atleast_2d(X)
         Ix = np.ones((X.shape[0], 1))
         if self.constraints is not None:
             for constraint in self.constraints:
+                constraint_kwargs = constraint['kwargs']
                 constraint = constraint['constraint']
                 for i, x in enumerate(X):
-                    if Ix[i, 0] and not constraint(**self.wrapper.x2kwargs(x)):
-                        Ix[i, 0] = 0.
+                    if Ix[i, 0]:
+                        kwargs = self.wrapper.x2kwargs(x)
+                        if constraint_kwargs is not None:
+                            kwargs = {
+                                x: kwargs[x] for x in constraint_kwargs
+                                if x in kwargs
+                            }
+                        if not constraint(**kwargs):
+                            Ix[i, 0] = 0.
         return Ix
+
+
+@contextmanager
+def _inject_as_design_space(ds):
+    old = GPyOpt.optimization.anchor_points_generator.Design_space
+
+    class _Injected(object):
+        def __new__(cls, space, constraints=None, store_noncontinuous=False):
+            # make sure this injection is safe. If any of these asserts fail,
+            # then this hack is broken
+            assert space == ds.config_space
+            assert constraints == ds.constraints
+            assert store_noncontinuous == ds.store_noncontinuous
+            return ds
+    try:
+        GPyOpt.optimization.anchor_points_generator.Design_space = _Injected
+        yield
+    finally:
+        GPyOpt.optimization.anchor_points_generator.Design_space = old
 
 
 def bayesopt(wrapper, params, history_file=None, constraints=None):
@@ -463,7 +499,10 @@ def bayesopt(wrapper, params, history_file=None, constraints=None):
         this point
     params : BayesianOptimizationParams
     history_file : str, optional
-        A path to a history file, where past samples are saved and loaded
+        A path to a history file, where past samples are saved and loaded.
+        Floating points, integers, and strings will be serialized as expected.
+        Categorical variables that are not strings will be serialized with a
+        pound ('#') followed by their index in the domain
     constraints : sequence, optional
         A sequence of functions whose only parameters match those of the
         wrapped function. The function do not need to list all parameters, but
@@ -480,7 +519,7 @@ def bayesopt(wrapper, params, history_file=None, constraints=None):
     if len(wrapper.get_unset()):
         raise ValueError('All parameters must be set in objective')
     objective = GPyOpt.core.task.SingleObjective(wrapper.get_gpyopt_func())
-    space = GPyOptDesignSpaceWrapper(wrapper, constraints=constraints)
+    space = _DSWrapper(wrapper, constraints=constraints)
     acquisition_optimizer = GPyOpt.optimization.AcquisitionOptimizer(
         space, optimizer=params.acquisition_optimizer)
     input_dim = len(wrapper.get_variable_names())
@@ -583,7 +622,8 @@ def bayesopt(wrapper, params, history_file=None, constraints=None):
             cur_num = 1
         else:
             cur_num = min(rem, samples_before_log)
-        bo.run_optimization(cur_num, eps=10 ** params.log10_min_diff)
+        with _inject_as_design_space(space):
+            bo.run_optimization(cur_num, eps=10 ** params.log10_min_diff)
         X_new, Y_new = bo.get_evaluations()
         assert np.allclose(X_new[:len(X)], X)
         if len(X_new) - len(X) < cur_num:
