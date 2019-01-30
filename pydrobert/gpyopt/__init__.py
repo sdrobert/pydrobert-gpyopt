@@ -19,11 +19,11 @@ from __future__ import division
 from __future__ import print_function
 
 import inspect
+import shutil
 
 from collections import OrderedDict, namedtuple
 from csv import DictReader, DictWriter
 from tempfile import NamedTemporaryFile
-import shutil
 
 import GPy
 import GPyOpt
@@ -148,6 +148,58 @@ class GPyOptObjectiveWrapper(object):
             })
         return d
 
+    def _kwargs2serial(self, kwargs):
+        for name, val in kwargs.items():
+            if not isinstance(val, (str, float, int, np.float, np.int)):
+                param = self.param_dict[name]
+                if param.type == 'fixed':
+                    # don't care about re-reading it
+                    kwargs[name] = str(val)
+                    continue
+                # we can only be non-string, categorical here. Easiest way to
+                # deal with this is to use the index, and prepend the string
+                # with pounds until it no longer matches any entry in the
+                # domain. Sure, it's hard to read, but that's your fault for
+                # using a weird categorical variable.
+                idx = -1
+                for idx, pval in enumerate(param.domain):
+                    if pval == val:
+                        break
+                val = str(idx)
+                matches_another_val = True
+                while matches_another_val:
+                    val = '#' + val
+                    matches_another_val = False
+                    for pval in param.domain:
+                        if pval == val:
+                            matches_another_val = True
+                            break
+            kwargs[name] = str(val)
+
+    def _serial2kwargs(self, kwargs):
+        for name, val in kwargs.items():
+            param = self.param_dict.get(name, None)
+            if param is None or param.type == 'fixed':
+                continue
+            if param.type in {'continuous', 'discrete'}:
+                kwargs[name] = type(param.domain[0])(val)
+                continue
+            found_exact_val = False
+            for pval in param.domain:
+                try:
+                    # floats, ints, strings
+                    if (val == pval) or np.isclose(float(val), pval):
+                        kwargs[name] = pval
+                        found_exact_val = True
+                        break
+                except ValueError:
+                    pass
+            if found_exact_val:
+                continue
+            # we've padded an index with #s
+            val = int(val.lstrip('#'))
+            kwargs[name] = param.domain[val]
+
     def x2kwargs(self, x):
         '''Convert GPyOpt function input to objective function kwargs'''
         self._raise_if_unset()
@@ -176,12 +228,7 @@ class GPyOptObjectiveWrapper(object):
         x = []
         for arg_name, param in self.param_dict.items():
             if param.type == 'categorical':
-                # we do this awkward thing instead of 'index' in case we're
-                # coming from read_history_to_X_Y
-                for idx, val in enumerate(param.domain):
-                    if type(val)(kwargs[arg_name]) == val:
-                        x.append(float(idx))
-                        break
+                x.append(float(param.domain.index(kwargs[arg_name])))
             elif param.type in {'continuous', 'discrete'}:
                 x.append(float(kwargs[arg_name]))
         return np.array(x)
@@ -212,6 +259,7 @@ class GPyOptObjectiveWrapper(object):
             X = []
             Y = []
             for row in reader:
+                self._serial2kwargs(row)
                 X.append(self.kwargs2x(row))
                 Y.append(float(row[objective_entry]))
             return np.vstack(X), np.array(Y)[..., np.newaxis]
@@ -262,6 +310,7 @@ class GPyOptObjectiveWrapper(object):
                 kwargs = self.x2kwargs(x)
                 kwargs.update(extra_entries)
                 kwargs[objective_entry] = float(y)
+                self._kwargs2serial(kwargs)
                 writer.writerow(kwargs)
         finally:
             if close:
@@ -342,9 +391,70 @@ class BayesianOptimizationParams(param.Parameterized):
         0.01, bounds=(0, None), inclusive_bounds=(False, False),
         doc='larger values mean more exploration'
     )
+    write_fixed = param.Boolean(
+        False,
+        doc='Whether to write fixed parameters to history file'
+    )
 
 
-def bayesopt(wrapper, params, history_file=None):
+class GPyOptDesignSpaceWrapper(GPyOpt.Design_space):
+    '''Create a design space for a GPyOptObjectiveWrapper
+
+    Parameters
+    ----------
+    wrapped : GPyOptObjectiveWrapper
+        The wrapped function to make a design space for.
+        ``wrapped.get_unset()`` must be empty
+    constraints : sequence, optional
+        A sequence of functions whose only parameters match those of the
+        wrapped function. The function do not need to list all parameters, but
+        cannot include any parameters with names not listed in the wrapped
+        function. Given a sample, a constraint is expected to return ``True``
+        if the sample adheres to the restraint, ``False`` otherwise.
+    '''
+
+    def __init__(self, wrapper, constraints=None):
+        if len(wrapper.get_unset()):
+            raise ValueError('All parameters must be set in objective')
+        self.wrapper = wrapper
+        domain = wrapper.get_domain()
+        if constraints is not None:
+            all_param_names = set(wrapper.param_dict)
+            new_constraints = []
+            for constraint in constraints:
+                try:
+                    name = constraint['name']
+                    constraint = constraint['constraint']
+                except TypeError:
+                    name = 'constraint_{}'.format(len(new_constraints) + 1)
+                arg_names, _, _, defaults = inspect.getargspec(
+                    constraint)
+                constraint_names = set(
+                    arg_names[:len(arg_names) - len(defaults)])
+                missing_params = all_param_names - constraint_names
+                if missing_params:
+                    raise ValueError(
+                        'constraint contains parameters {} which are not '
+                        'arguments to the objective'.format(missing_params))
+                new_constraints.append(
+                    {'name': name, 'constraint': constraint})
+            constraints = new_constraints
+        super(GPyOptDesignSpaceWrapper, self).__init__(
+            domain, constraints=constraints)
+
+    def indicator_constraints(self, X):
+        X = np.atleast_2d(X)
+        Ix = np.ones((X.shape[0], 1))
+        if self.constraints is not None:
+            for constraint in self.constraints:
+                constraint = constraint['constraint']
+                for i, x in enumerate(X):
+                    if Ix[i, 0] and not constraint(**self.wrapper.x2kwargs(x)):
+                        Ix[i, 0] = 0.
+        return Ix
+
+
+def bayesopt(wrapper, params, history_file=None, constraints=None):
     '''Perform bayesian optimization on a wrapped objective function
 
     Parameters
@@ -355,6 +465,12 @@ def bayesopt(wrapper, params, history_file=None):
     params : BayesianOptimizationParams
     history_file : str, optional
         A path to a history file, where past samples are saved and loaded
+    constraints : sequence, optional
+        A sequence of functions whose only parameters match those of the
+        wrapped function. The function do not need to list all parameters, but
+        cannot include any parameters with names not listed in the wrapped
+        function. Given a sample, a constraint is expected to return ``True``
+        if the sample adheres to the restraint, ``False`` otherwise.
 
     Returns
     -------
@@ -365,7 +481,7 @@ def bayesopt(wrapper, params, history_file=None):
     if len(wrapper.get_unset()):
         raise ValueError('All parameters must be set in objective')
     objective = GPyOpt.core.task.SingleObjective(wrapper.get_gpyopt_func())
-    space = GPyOpt.Design_space(wrapper.get_domain())
+    space = GPyOptDesignSpaceWrapper(wrapper, constraints=constraints)
     acquisition_optimizer = GPyOpt.optimization.AcquisitionOptimizer(
         space, optimizer=params.acquisition_optimizer)
     input_dim = len(wrapper.get_variable_names())
@@ -423,7 +539,8 @@ def bayesopt(wrapper, params, history_file=None):
     def write_to_history(X, Y):
         if history_file:
             tmp_file = NamedTemporaryFile(mode='w', delete=False)
-            wrapper.write_X_Y_to_history(tmp_file, X, Y)
+            wrapper.write_X_Y_to_history(
+                tmp_file, X, Y, write_fixed=params.write_fixed)
             tmp_file.close()
             shutil.move(tmp_file.name, history_file)
 
