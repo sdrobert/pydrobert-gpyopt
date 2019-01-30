@@ -129,14 +129,16 @@ def test_can_serialize_lots_of_stuff(temp_dir):
     wrapper.set_variable_parameter('d', 'categorical', d_tup)
     hist_path = os.path.join(temp_dir, 'hist.csv')
     params = gpyopt.BayesianOptimizationParams(
-        initial_design_numdata=4,
+        initial_design_samples=4,
         max_samples=4,
         seed=5,
     )
     best_1 = gpyopt.bayesopt(wrapper, params, hist_path)
     assert best_1['d'] in d_tup
     best_2 = gpyopt.bayesopt(wrapper, params, hist_path)
-    assert best_1 == best_2
+    assert best_1['c'] == best_2['c']
+    assert abs(best_1['b'] - best_2['b']) < 1e-5
+    assert best_1['d'] == best_2['d']
 
 
 def test_strings_are_provided():

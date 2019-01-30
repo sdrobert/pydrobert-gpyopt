@@ -214,8 +214,7 @@ class GPyOptObjectiveWrapper(object):
                 i += 1
             elif param.type == 'discrete':
                 # this ensures we use the original type of the argument
-                d[arg_name] = param.domain[
-                    np.where(np.isclose(x[i], param.domain))[0].item()]
+                d[arg_name] = type(param.domain[0])(x[i])
                 i += 1
             else:
                 d[arg_name] = x[i]
