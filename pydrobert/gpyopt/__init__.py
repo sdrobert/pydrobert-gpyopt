@@ -20,6 +20,7 @@ from __future__ import print_function
 
 import inspect
 import shutil
+import warnings
 
 from collections import OrderedDict, namedtuple
 from csv import DictReader, DictWriter
@@ -145,13 +146,15 @@ class GPyOptObjectiveWrapper(object):
             d.append({
                 'name': arg_name,
                 'type': param.type,
-                'domain': domain
+                'domain': domain,
+                'dimensionality': 1,
             })
         return d
 
     def _kwargs2serial(self, kwargs):
         for name, val in kwargs.items():
-            if not isinstance(val, (str, float, int, np.float, np.int)):
+            # for some reason, bool
+            if not isinstance(val, (str, float, int, np.float, np.int, bool)):
                 param = self.param_dict[name]
                 if param.type == 'fixed':
                     # don't care about re-reading it
@@ -187,13 +190,19 @@ class GPyOptObjectiveWrapper(object):
                 continue
             found_exact_val = False
             for pval in param.domain:
+                if (
+                        (pval is True and val == 'True') or
+                        (pval is False and val == 'False')):
+                    kwargs[name] = pval
+                    found_exact_val = True
+                    break
                 try:
                     # floats, ints, strings
                     if (val == pval) or np.isclose(float(val), pval):
                         kwargs[name] = pval
                         found_exact_val = True
                         break
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
             if found_exact_val:
                 continue
@@ -220,6 +229,9 @@ class GPyOptObjectiveWrapper(object):
             else:
                 d[arg_name] = x[i]
                 i += 1
+        if i != len(x):
+            raise ValueError(
+                'mismatch between GPyOpt sample and wrapper kwargs')
         return d
 
     def kwargs2x(self, kwargs):
@@ -452,6 +464,8 @@ class _DSWrapper(GPyOpt.Design_space):
 
     def indicator_constraints(self, X):
         X = np.atleast_2d(X)
+        if X.shape[1] != self.objective_dimensionality:
+            X = self.zip_inputs(X)
         Ix = np.ones((X.shape[0], 1))
         if self.constraints is not None:
             for constraint in self.constraints:
@@ -478,7 +492,11 @@ def _inject_as_design_space(ds):
         def __new__(cls, space, constraints=None, store_noncontinuous=False):
             # make sure this injection is safe. If any of these asserts fail,
             # then this hack is broken
-            assert space == ds.config_space
+            for s, s2 in zip(space, ds.config_space):
+                assert '_'.join(s['name'].split('_')[:-1]) == s2['name']
+                assert s2['type'] == s['type']
+                assert np.allclose(s2['domain'], s['domain'])
+                assert s2['dimensionality'] == s['dimensionality']
             assert constraints == ds.constraints
             assert store_noncontinuous == ds.store_noncontinuous
             return ds
@@ -584,10 +602,24 @@ def bayesopt(wrapper, params, history_file=None, constraints=None):
 
     if params.seed is not None:
         np.random.seed(params.seed)
-    # assume that the initial design remains in the history file in order
     X_init = GPyOpt.experiment_design.initial_design(
         params.initial_design_name, space,
         params.initial_design_samples)
+    if (
+            len(X) and
+            len(X_init) and
+            not np.allclose(X_init[:len(X)], X[:len(X_init)])):
+        if params.initial_design_name == 'grid':
+            raise ValueError(
+                'Points were to be initially sampled from a grid, but the '
+                'history file had different initial samples'
+            )
+        elif params.seed is not None:
+            warnings.warn(
+                'history file does not share initial samples as those '
+                'that were just generated. Continuing will make it difficult '
+                'to reproduce results'
+            )
     X_init = X_init[len(X):max_samples if max_samples < float('inf') else None]
     assert len(X_init) == initial_design_samples
     samples_before_log = log_after_iters
