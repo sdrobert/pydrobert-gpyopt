@@ -35,11 +35,12 @@ params = gpyopt.BayesianOptimizationParams(
            # (assuming foo is deterministic)
   log_after_iters=5,
 )
-best = gpyopt.bayesopt(wrapper, params, 'hist.csv', constraints=[
-    lambda a, d: abs(a - d) > .5,  # constrain the difference between a and
-                                   # d to be greater than .5
-])
+best = gpyopt.bayesopt(wrapper, params, 'hist.csv')
 ```
+
+There is an option for constraints, but it's not currently working. See
+my issue [here](https://github.com/SheffieldML/GPyOpt/issues/94).
+
 
 If you provide a history file to read/write from, optimization can be
 resumed after unexpected interrupts. There are a lot of options to ``bayesopt``

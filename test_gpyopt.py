@@ -72,19 +72,21 @@ def test_simple_objective():
     assert abs(_squared(best_3['x'], 1.) - 1.) < 1e-2
 
 
+@pytest.mark.xfail
 def test_constraints():
     wrapper = gpyopt.GPyOptObjectiveWrapper(_enforcer_objective)
-    wrapper.set_variable_parameter('int_', 'discrete', (0, 3))
+    wrapper.set_variable_parameter('int_', 'discrete', tuple(range(100)))
     wrapper.set_variable_parameter('day', 'categorical', ('monday', 'tuesday'))
     params = gpyopt.BayesianOptimizationParams(
         initial_design_samples=4,
         max_iterations=5,
+        seed=2,
     )
     best = gpyopt.bayesopt(wrapper, params, constraints=[
         _day_cannot_be_tuesday,
         _int_not_odd,
     ])
-    assert best['int_'] in {0, 2}
+    assert best['int_'] in range(0, 100, 2)
     assert best['day'] == 'monday'
 
 
@@ -92,7 +94,7 @@ def test_multiple_variable_types():
     wrapper = gpyopt.GPyOptObjectiveWrapper(_polynomial)
     wrapper.set_variable_parameter('shift', 'categorical', (10, 0, 1))
     wrapper.set_variable_parameter('x', 'continuous', (.1, .9))
-    wrapper.set_variable_parameter('d', 'discrete', (-1, 5))
+    wrapper.set_variable_parameter('d', 'discrete', tuple(range(-1, 5)))
     params = gpyopt.BayesianOptimizationParams(
         model_type='gp',
         seed=1,
@@ -146,6 +148,16 @@ def test_can_serialize_lots_of_stuff(temp_dir):
     assert best_1['c'] == best_2['c']
     assert abs(best_1['b'] - best_2['b']) < 1e-5
     assert best_1['d'] == best_2['d']
+
+
+def test_grid():
+    X = np.zeros(10)
+
+    def _obj(x):
+        X[int(x)] = 1.
+        return 0.
+    wrapper = gpyopt.GPyOptObjectiveWrapper(_obj)
+    wrapper.set_variable_parameter('x', 'discrete', tuple(range(10)))
 
 
 def test_strings_are_provided():
