@@ -1,6 +1,11 @@
 # pydrobert-gpyopt
 Utilities to streamline GPyOpt interfaces for ML
 
+**Due to ongoing frustration with the bugs and lack of communication in the
+Issues tab, I've stopped using GPyOpt. I will no longer update this repo.
+I highly suggest [Optuna](https://optuna.org/), which has been working well
+for me and requires minimal wrapping.**
+
 ## How to use
 GPyOpt is incredibly powerful, but a tad clunky. This lightweight package
 provides two utilities in ``pydrobert.gpyopt`` to make things easier. The
