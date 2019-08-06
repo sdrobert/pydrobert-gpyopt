@@ -59,3 +59,8 @@ via PyPI and source install.
 ``` bash
 pip install pydrobert-gpyopt
 ```
+
+## Licensing and How to Cite
+
+Please see the [pydrobert page](https://github.com/sdrobert/pydrobert) for more
+details.
